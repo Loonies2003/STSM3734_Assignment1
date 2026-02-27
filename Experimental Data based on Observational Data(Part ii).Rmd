@@ -1,0 +1,132 @@
+---
+title: "Assignment 1 part 2"
+author: "Oamen Dominion, 2021332339"
+date: "`r Sys.Date()`"
+output: pdf_document
+
+```{r predictor variables, echo= TRUE, eval = TRUE}
+
+n <- 2160
+# ---- Size (continuous) ----
+# Realistic SA house sizes (square meters)
+size <- runif(n, min = 50, max = 300)
+
+
+# ---- Bedrooms (count, correlated with size) ----
+# Larger houses tend to have more bedrooms
+# beds <- round(size / 60 + rnorm(n, 0, 1))
+
+# Clamp values between 1 and 6
+# beds <- pmin(6, pmax(1, beds))
+
+
+# ---- Renovation status (categorical) ----
+# About 30% renovated
+# Create empty vector
+renovated_bin <- numeric(n)
+
+# Fill each group separately
+renovated_bin[location == "Rural" & dist_cat == "Far"] <- 
+  sample(c(rep(1, 130), rep(0, 302)))
+
+renovated_bin[location == "Urban" & dist_cat == "Far"] <- 
+  sample(c(rep(1, 194), rep(0, 454)))
+
+renovated_bin[location == "Rural" & dist_cat == "Near"] <- 
+  sample(c(rep(1, 130), rep(0, 302)))
+
+renovated_bin[location == "Urban" & dist_cat == "Near"] <- 
+  sample(c(rep(1, 194), rep(0, 454)))
+
+renovated <- factor(renovated_bin, levels = c(0,1), labels = c("No", "Yes"))
+table(renovated, location)
+table(dist_cat, renovated)
+
+
+# ---- Location (categorical) ----
+# About 60% Urban
+location_bin <- c(rep(0, 864), rep(1, 1296))
+location_bin <- sample(location_bin)  # shuffle randomly
+
+location <- factor(location_bin,
+                   levels = c(0,1),
+                   labels = c("Rural", "Urban"))
+
+
+# ---- Distance from city (continuous) ----
+# Urban houses closer to city
+# Rural houses farther away
+dist_km <- ifelse(location == "Urban",
+                  runif(n, 1, 32.5),
+                  runif(n, 32.5, 100))
+```
+
+```{r tertile split, echo = TRUE, eval = TRUE}
+
+# ---- Categorise Size ----
+size_cat <- cut(size,
+                breaks = c(50, 132.10, 219.85, 300),
+                labels = c("Small", "Medium", "Large"),
+                include.lowest = TRUE)
+
+size_cat <- factor(size_cat)
+table(size_cat)
+
+# ---- Categorise Distance ----
+dist_cat <- ifelse(location == "Urban",
+                   ifelse(dist_km < 16.00, "Near", "Far"),
+                   ifelse(dist_km < 66.10, "Near", "Far"))
+
+dist_cat <- factor(dist_cat)
+table(dist_cat, location)
+
+table(beds, size_cat)
+
+
+```
+```{r Orthogonal matrix, echo =TRUE, eval = TRUE}
+ 
+ X <- model.matrix(~ size_cat + dist_cat + renovated + location)
+t(X) %*% X
+```
+```{r linear regression model}
+# Simulate error term
+epsilon <- rnorm(n, mean = 0, sd = 50000)
+
+# True model coefficients
+beta0 <- 650000
+beta_size <- 5000
+beta_reno <- 150000
+beta_urban <- 200000
+beta_dist <- -2000
+beta_interaction <- 2000
+
+# Simulate price
+house_data$price <- beta0 +
+                    beta_size * size +
+                    beta_reno * (renovated == "Yes") +
+                    beta_urban * (location == "Urban") +
+                    beta_dist * dist_km +
+                    beta_interaction * (size * (location == "Urban")) +
+                    epsilon
+
+# Fit linear regression
+model <- lm(price ~ size + dist_km + renovated + location + size:location, 
+            data = house_data)
+summary(model)
+
+```
+```{r}
+dev.off()
+par(mar = c(4, 4, 2, 2))
+par(mfrow = c(2, 2))
+plot(model)
+par(mfrow = c(1, 1))
+
+```
+
+
+
+
+
+

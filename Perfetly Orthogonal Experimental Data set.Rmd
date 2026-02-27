@@ -1,0 +1,145 @@
+---
+title: "Perfect Observational data"
+author: "Oamen Dominion, 2021332339"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r eraser}
+rm(list = ls())
+cat("\014")
+```
+
+```{r true model coefficients}
+set.seed(123)
+
+
+# ---- True Model Coefficients ----
+beta0 <- 650000
+beta_size <- 5000
+beta_reno <- 150000
+beta_urban <- 200000
+beta_dist <- -2000
+beta_interaction <- 2000
+```
+
+```{r Create Perfect Orthogonal grid}
+# ---- Create Fully Crossed Orthogonal Design ----
+design <- expand.grid(
+  size_cat = c("Small", "Medium", "Large"),
+  dist_cat = c("Near", "Far"),
+  renovated = c("No", "Yes"),
+  location = c("Rural", "Urban")
+)
+
+# Replicate each cell 90 times
+design <- design[rep(1:nrow(design), each = 90), ]
+rownames(design) <- NULL
+
+# Verify dimensions and balance
+dim(design)
+table(design$size_cat, design$dist_cat)
+table(design$renovated, design$location)
+```
+```{r Add Continuous Variables}
+# Size - continuous within each size category
+design$size <- ifelse(design$size_cat == "Small",
+                      runif(nrow(design), 50, 131.59),
+               ifelse(design$size_cat == "Medium",
+                      runif(nrow(design), 131.59, 212.8),
+                      runif(nrow(design), 212.8, 300)))
+
+# Distance - continuous within each dist category and location
+design$dist_km <- ifelse(design$location == "Urban" & design$dist_cat == "Near",
+                         runif(nrow(design), 1, 16.75),
+                  ifelse(design$location == "Urban" & design$dist_cat == "Far",
+                         runif(nrow(design), 16.75, 32.5),
+                  ifelse(design$location == "Rural" & design$dist_cat == "Near",
+                         runif(nrow(design), 32.5, 66.25),
+                         runif(nrow(design), 66.25, 100))))
+
+# Check
+head(design)
+summary(design$size)
+summary(design$dist_km)
+```
+```{r Response Variable}
+# ---- Simulate Response Variable ----
+
+# Error term
+epsilon <- rnorm(nrow(design), mean = 0, sd = 50000)
+
+# Simulate price using true model
+design$price <- beta0 +
+                beta_size * design$size +
+                beta_reno * (design$renovated == "Yes") +
+                beta_urban * (design$location == "Urban") +
+                beta_dist * design$dist_km +
+                beta_interaction * (design$size * (design$location == "Urban")) +
+                epsilon
+
+# Check
+summary(design$price)
+head(design$price)
+```
+```{r Orthogonal matrix}
+X <- model.matrix(~ size_cat + dist_cat + renovated + location, data = design)
+t(X) %*% X
+```
+```{r Correlation Matrix}
+# ---- Correlation Matrix ----
+# Convert factors to numeric first
+design_numeric <- data.frame(
+  size = design$size,
+  dist_km = design$dist_km,
+  renovated = as.numeric(design$renovated),
+  location = as.numeric(design$location)
+)
+
+# Correlation matrix
+cor(design_numeric)
+```
+```{r Correlation Scatterplot Matrix}
+# ---- Continuous variables only in pairs plot ----
+pairs(~ size + dist_km,
+      data = design_numeric,
+      main = "Scatterplot Matrix - Continuous Variables",
+      col = as.numeric(design$location),  # colour by location
+      pch = 19,
+      cex = 0.5)
+
+# Add legend
+legend("topright", 
+       legend = c("Rural", "Urban"),
+       col = c(1, 2),
+       pch = 19)
+
+```
+
+
+```{r Linear Regression Model}
+model <- lm(price ~ size + dist_km + renovated + location + size:location, 
+            data = design)
+summary(model)
+```
+```{r Diagnostic Plots}
+  # ---- Diagnostic Plots ----
+
+par(mar = c(4, 4, 2, 2))
+par(mfrow = c(2, 2))
+plot(model)
+par(mfrow = c(1, 1))
+
+```
+
+```{r export dataset}
+write.csv(design, file = "C:/Users/MC/Downloads/house_data_experimental.csv", 
+          row.names = FALSE)
+
+# Confirm export
+cat("Dataset exported successfully!")
+cat("\nRows:", nrow(design))
+cat("\nColumns:", ncol(design))
+```
+
+
