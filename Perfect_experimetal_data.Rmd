@@ -1,0 +1,197 @@
+---
+title: "Perfect Observational data"
+author: "Oamen Dominion, 2021332339"
+date: "`r Sys.Date()`"
+output: word_document
+---
+```{r eraser}
+rm(list = ls())
+cat("\014")
+```
+```{r true model coefficients}
+set.seed(123)
+# ---- True Model Coefficients ----
+beta0 <- 650000
+beta_size <- 5000
+beta_reno <- 150000
+beta_urban <- 200000
+beta_dist <- -2000
+beta_interaction <- 2000
+```
+```{r Create Perfect Orthogonal grid}
+# use sum contrast to preserve orthogonality
+options(contrasts = c("contr.sum", "contr.sum"))
+# ---- Create Fully Crossed Orthogonal Design ----
+design <- expand.grid(
+  size_cat = c("Small", "Medium", "Large"),
+  dist_cat = c("Near", "Far"),
+  renovated = c("No", "Yes"),
+  location = c("Rural", "Urban")
+)
+# Replicate each cell 90 times
+design <- design[rep(1:nrow(design), each = 90), ]
+rownames(design) <- NULL
+# Verify dimensions and balance
+dim(design)
+table(design$size_cat, design$dist_cat)
+table(design$renovated, design$location)
+```
+```{r Add Continuous Variables}
+n <- nrow(design)
+
+# FIX: Generate continuous variables WITHIN each cell of the factorial design
+# so they are balanced (and thus orthogonal) across all factor combinations.
+# Strategy: assign a centred sequence within every unique cell, then
+# stack them in the same order as the replicated design rows.
+
+# Number of cells and replicates per cell
+n_cells <- nrow(expand.grid(
+  size_cat = c("Small", "Medium", "Large"),
+  dist_cat = c("Near", "Far"),
+  renovated = c("No", "Yes"),
+  location = c("Rural", "Urban")
+))  # = 24
+reps_per_cell <- 90
+
+# Within-cell centred sequence (same for every cell → balanced across factors)
+within_seq <- seq(-1, 1, length.out = reps_per_cell)  # sums to 0
+
+# size: independent within-cell sequence (identical pattern, different variable)
+design$size    <- rep(within_seq, times = n_cells)
+
+# dist_km: Gram-Schmidt orthogonalization against size
+# Start with a random base variable, then subtract the projection onto
+# within_seq (size) — this guarantees exact zero linear correlation with size
+# while producing a realistic-looking continuous variable (not a parabola)
+set.seed(7)
+base_dist <- rnorm(reps_per_cell)
+
+# Remove the component of base_dist that overlaps with within_seq
+base_dist_orth <- base_dist - (sum(base_dist * within_seq) /
+                                sum(within_seq * within_seq)) * within_seq
+
+# Mean-centre to ensure orthogonality with intercept
+base_dist_orth <- scale(base_dist_orth, center = TRUE, scale = FALSE)[,1]
+
+# Replicate identically across all cells (preserves orthogonality with factors)
+design$dist_km <- rep(base_dist_orth, times = n_cells)
+
+# Mean-center globally to guarantee orthogonality with the intercept
+design$size    <- scale(design$size,   center = TRUE, scale = FALSE)
+design$dist_km <- scale(design$dist_km, center = TRUE, scale = FALSE)
+
+# Sum-coded binary variables (-1 / +1) — orthogonal to intercept by construction
+design$renovated_num <- ifelse(design$renovated == "Yes",  1, -1)
+design$location_num  <- ifelse(design$location  == "Urban", 1, -1)
+
+# Check
+summary(design$size)
+summary(design$dist_km)
+```
+```{r Response Variable}
+# ---- Simulate Response Variable ----
+
+# Step 1: Compute the deterministic signal first (no error)
+signal <- beta0 +
+          beta_size * design$size +
+          beta_reno * (design$renovated == "Yes") +
+          beta_urban * (design$location == "Urban") +
+          beta_dist * design$dist_km +
+          beta_interaction * (design$size * (design$location == "Urban"))
+
+# Step 2: Derive sigma that forces R² = 0.35
+# R² = Var(signal) / (Var(signal) + sigma²)
+# => sigma² = Var(signal) * (1 - R²) / R²
+target_r2 <- 0.35
+var_signal <- var(signal)
+sigma      <- sqrt(var_signal * (1 - target_r2) / target_r2)
+cat("Derived sigma:", round(sigma, 2), "\n")
+
+# Step 3: Add noise with the derived sigma
+epsilon      <- rnorm(nrow(design), mean = 0, sd = sigma)
+design$price <- signal + epsilon
+
+# Check
+summary(design$price)
+head(design$price)
+```
+```{r Orthogonal matrix}
+X <- model.matrix(~ size_cat + dist_cat + renovated + location, data = design)
+t(X) %*% X
+```
+```{r Correlation Matrix}
+# ---- Correlation Matrix ----
+design_numeric <- data.frame(
+  size     = design$size,
+  dist_km  = design$dist_km,
+  renovated = design$renovated_num,
+  location  = design$location_num
+)
+# Correlation matrix — all off-diagonals should now be exactly 0
+round(cor(design_numeric), 10)
+```
+```{r Correlation Scatterplot Matrix}
+# ---- Continuous variables only in pairs plot ----
+pairs(~ size + dist_km,
+      data = design_numeric,
+      main = "Scatterplot Matrix - Continuous Variables",
+      col = as.numeric(design$location),
+      pch = 19,
+      cex = 0.5)
+legend("topright",
+       legend = c("Rural", "Urban"),
+       col = c(1, 2),
+       pch = 19)
+```
+```{r Linear Regression Model}
+model <- lm(price ~ size + dist_km + renovated + location + size:location,
+            data = design)
+summary(model)
+```
+```{r Diagnostic Plots}
+# ---- Diagnostic Plots ----
+par(mar = c(4, 4, 2, 2))
+par(mfrow = c(2, 2))
+plot(model)
+par(mfrow = c(1, 1))
+```
+```{r Partial Residual Plots}
+# ---- Partial Residual Plots via termplot() ----
+# crPlots() does not support interaction terms; termplot() handles them cleanly.
+par(mar = c(4, 4, 2, 2))
+termplot(model,
+         partial.resid = TRUE,
+         smooth        = panel.smooth,   # loess smoother overlay
+         col.res       = "grey50",
+         col.smth      = "red",
+         pch           = 19,
+         cex           = 0.4,
+         ask           = FALSE)
+par(mfrow = c(1, 1))
+```
+```{r export dataset}
+# Export only the correctly coded columns needed for Python analysis
+# Uses renovated_num and location_num (-1/+1 sum coded) instead of raw strings
+# dist_km is the mean-centred quadratic version from the orthogonal design
+export_data <- data.frame(
+  size_cat     = design$size_cat,
+  dist_cat     = design$dist_cat,
+  renovated    = design$renovated_num,   # sum coded: No=-1, Yes=1
+  location     = design$location_num,   # sum coded: Rural=-1, Urban=1
+  size         = design$size,
+  dist_km      = design$dist_km,
+  price        = design$price
+)
+
+# Verify before export
+cat("dist_km mean:", round(mean(export_data$dist_km), 10), "\n")
+cat("dist_km range:", round(range(export_data$dist_km), 4), "\n")
+cat("renovated unique:", unique(export_data$renovated), "\n")
+cat("location unique:", unique(export_data$location), "\n")
+
+write.csv(export_data, file = "C:/Users/MC/Downloads/hdata_experimental.csv",
+          row.names = FALSE)
+cat("Dataset exported successfully!")
+cat("\nRows:", nrow(export_data))
+cat("\nColumns:", ncol(export_data))
+```
